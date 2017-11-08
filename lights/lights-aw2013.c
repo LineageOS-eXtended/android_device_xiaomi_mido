@@ -75,6 +75,9 @@ char const*const BLUE_BREATH_FILE
 char const*const BUTTON_FILE
         = "/sys/class/leds/button-backlight/brightness";
 
+char const*const BUTTON_MAX_BRIGHTNESS_FILE
+        = "/sys/class/leds/button-backlight/max_brightness";
+
 struct color {
     unsigned int r, g, b;
     float _L, _a, _b;
@@ -164,6 +167,9 @@ static void rgb2lab(unsigned int R, unsigned int G, unsigned int B,
     *_b = (bs + .5);
 }
 
+#define DEFAULT_MAX_BRIGHTNESS 255
+int max_brightness;
+
 /**
  * device methods
  */
@@ -179,6 +185,39 @@ void init_globals(void)
     // init the mutex
     pthread_mutex_init(&g_lock, NULL);
 
+}
+
+static int
+read_int(char const* path)
+{
+    int fd, len;
+    int num_bytes = 10;
+    char buf[11];
+    int retval;
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        ALOGE("%s: failed to open %s\n", __func__, path);
+       goto fail;
+    }
+
+    len = read(fd, buf, num_bytes - 1);
+    if (len < 0) {
+        ALOGE("%s: failed to read from %s\n", __func__, path);
+        goto fail;
+    }
+
+    buf[len] = '\0';
+    close(fd);
+
+    // no endptr, decimal base
+    retval = strtol(buf, NULL, 10);
+    return retval == 0 ? -1 : retval;
+
+fail:
+    if (fd >= 0)
+        close(fd);
+    return -1;
 }
 
 static int
@@ -434,11 +473,21 @@ set_light_buttons(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     int err = 0;
+    int brightness = rgb_to_brightness(state);
     if(!dev) {
         return -1;
     }
+
+    // If buttons brightness is not the default (255),
+    // apply linear scaling across the accepted range.
+    if (max_brightness != DEFAULT_MAX_BRIGHTNESS) {
+        int old_brightness = brightness;
+        brightness = brightness * max_brightness / DEFAULT_MAX_BRIGHTNESS;
+        ALOGV("%s: scaling buttons brightness %d => %d\n", __func__, old_brightness, brightness);
+    }
+
     pthread_mutex_lock(&g_lock);
-    err = write_int(BUTTON_FILE, state->color & 0xFF);
+    err = write_int(BUTTON_FILE, brightness);
     pthread_mutex_unlock(&g_lock);
     return err;
 }
@@ -479,6 +528,12 @@ static int open_lights(const struct hw_module_t* module, char const* name,
         set_light = set_light_buttons;
     else
         return -EINVAL;
+
+    max_brightness = read_int(BUTTON_MAX_BRIGHTNESS_FILE);
+    if (max_brightness < 0) {
+        ALOGE("%s: failed to read max buttons brightness, fallback to 255!\n", __func__);
+        max_brightness = DEFAULT_MAX_BRIGHTNESS;
+    }
 
     pthread_once(&g_init, init_globals);
 
