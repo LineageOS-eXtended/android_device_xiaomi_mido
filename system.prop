@@ -184,5 +184,8 @@ ro.sys.fw.trim_empty_percent=100
 ro.sys.fw.trim_cache_percent=100
 ro.sys.fw.trim_enable_memory=2147483648
 
+# Usb
+persist.sys.usb.config.extra=none
+
 # Wifi
 wifi.interface=wlan0
